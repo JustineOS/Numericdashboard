@@ -47,6 +47,6 @@ See [Process Design Document](https://docs.google.com/document/d/19vQ_XpmEuaUiz0
 
 ```bash
 # Create a new private repo at github.com, then:
-git remote add origin https://github.com/gusto-inc/numeric-close-dashboard.git
+git remote add origin https://github.com/JustineOS/Numericdashboard.git
 git push -u origin main
 ```
