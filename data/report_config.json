@@ -1,0 +1,25 @@
+{
+  "ignored_reports": [
+    "urc_38MDaLDEg8Sj5CVsmANfv0YEWx1",
+    "urc_30Ksvl2COYtULcNNOJxv9aySbNB",
+    "urc_30yEhH9wCiIbOVKFpA4Q6XK60v2"
+  ],
+  "mom_reports": [
+    "urc_2y6cd3CIWHS5RN0RhofjbQdoMnZ",
+    "urc_2y73FH3MFkjHS4kP4PjxQn6Mmel"
+  ],
+  "thresholds": {
+    "default": {
+      "dollar": 500000,
+      "pct": 0.1
+    },
+    "mom_account": {
+      "dollar": 50000,
+      "pct": 0.1
+    },
+    "mom_total": {
+      "dollar": 500000,
+      "pct": 0.1
+    }
+  }
+}

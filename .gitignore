@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+.DS_Store
+venv/
+.venv/
+
+# Data files — excluded (contain financial data; populated at runtime)
+data/*.xlsx
+data/numeric_cache.json
+data/variance_map.json
+
+# Sync log (generated at runtime)
+data/sync_log.json

@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Month-End Close Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-left">
+                <h1>Month-End Close Dashboard</h1>
+                <div class="close-month" id="closeMonth">Loading...</div>
+            </div>
+            <div class="header-buttons">
+                <button id="btnMappings" class="btn btn-icon" title="Manage name and team mappings">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                        <circle cx="9" cy="7" r="4"/>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                    </svg>
+                    Mappings
+                </button>
+                <button id="btnRefresh" class="btn btn-icon" title="Refresh data">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6M1 20v-6h6"/>
+                        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+        </header>
+
+        <div class="file-status" id="fileStatus">
+            <div class="files-loaded" id="filesLoaded"></div>
+            <div class="file-errors" id="fileErrors"></div>
+            <div class="sync-status" id="syncStatus"></div>
+        </div>
+
+        <div class="actions">
+            <div class="action-group">
+                <button id="btnPreviewDetailed" class="btn btn-outline">Preview</button>
+                <button id="btnSendDetailed" class="btn btn-primary">Send to #pe-close-monitoring</button>
+            </div>
+            <div class="action-group">
+                <button id="btnPreviewSummary" class="btn btn-outline">Preview</button>
+                <button id="btnSendSummary" class="btn btn-secondary">Send to #accounting_close</button>
+            </div>
+            <span id="statusMessage" class="status-message"></span>
+        </div>
+
+
+        <div class="summary-bar" id="summaryBar">
+            <span class="total-count">Total Outstanding: <strong id="totalCount">0</strong></span>
+        </div>
+
+        <div id="dashboard" class="dashboard">
+            <div class="loading">Loading data...</div>
+        </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div id="previewModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="previewTitle">Message Preview</h2>
+                <button class="modal-close" onclick="closePreview()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="preview-channel" id="previewChannel"></div>
+                <pre class="preview-message" id="previewMessage"></pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closePreview()">Close</button>
+                <button class="btn btn-primary" id="previewSendBtn">Send Message</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mappings Modal -->
+    <div id="mappingsModal" class="modal" style="display: none;">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2>Name &amp; Team Mappings</h2>
+                <button class="modal-close" onclick="closeMappings()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="mappings-intro">Assign display names and teams to people who appear as emails or have unknown teams.</p>
+
+                <div class="mappings-section">
+                    <h3>Name Mappings</h3>
+                    <p class="section-hint">Convert email addresses to proper display names</p>
+                    <div id="nameMappingsContainer" class="mappings-list"></div>
+                    <button class="btn btn-small btn-add" onclick="addNameMapping()">+ Add Name Mapping</button>
+                </div>
+
+                <div class="mappings-section">
+                    <h3>Team Mappings</h3>
+                    <p class="section-hint">Assign teams to people currently in "Unknown Team"</p>
+                    <div id="teamMappingsContainer" class="mappings-list"></div>
+                    <button class="btn btn-small btn-add" onclick="addTeamMapping()">+ Add Team Mapping</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeMappings()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveMappings()">Save Mappings</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const TYPE_LABELS = {
+            flux: 'Flux',
+            reconciliation: 'Reconciliation',
+            checklist: 'Checklist',
+            review_note: 'Review Note'
+        };
+
+        const TYPE_ORDER = ['flux', 'reconciliation', 'checklist', 'review_note'];
+        const ROLE_ORDER = ['Preparer', 'Reviewer', 'Reviewer 2', 'Assignee'];
+
+        let currentPreviewType = null;
+        let currentMappings = { names: {}, teams: {} };
+        let unmappedData = { unmapped_names: [], unmapped_teams: [] };
+
+        async function loadDashboard() {
+            const dashboardEl = document.getElementById('dashboard');
+            dashboardEl.innerHTML = '<div class="loading">Loading data...</div>';
+
+            try {
+                const response = await fetch('/api/dashboard');
+                const data = await response.json();
+
+                document.getElementById('closeMonth').textContent = data.close_month;
+                document.getElementById('totalCount').textContent = data.total_items;
+
+                // Show data source status
+                renderFileStatus(data.files_loaded, data.errors, data.data_source, data.synced_at);
+
+                renderDashboard(data.dashboard);
+            } catch (error) {
+                dashboardEl.innerHTML =
+                    '<div class="error">Error loading data. Check the console for details.</div>';
+                console.error('Dashboard load error:', error);
+            }
+        }
+
+        function renderFileStatus(loaded, errors, dataSource, syncedAt) {
+            const loadedEl = document.getElementById('filesLoaded');
+            const errorsEl = document.getElementById('fileErrors');
+            const syncEl   = document.getElementById('syncStatus');
+
+            if (dataSource === 'numeric') {
+                const syncTime = syncedAt
+                    ? new Date(syncedAt).toLocaleString()
+                    : 'unknown time';
+                loadedEl.innerHTML = `<span class="source-tag source-numeric">Numeric</span> Last synced: ${syncTime}`;
+                syncEl.innerHTML = '';
+            } else if (loaded && loaded.length > 0) {
+                const fileList = loaded.map(f =>
+                    `<span class="file-tag file-${f.type}">${f.file} (${f.sheets} sheet${f.sheets > 1 ? 's' : ''})</span>`
+                ).join('');
+                loadedEl.innerHTML = `<strong>Files loaded:</strong> ${fileList}`;
+                syncEl.innerHTML = '<span class="sync-hint">Ask Claude to "sync from Numeric" to switch to live data.</span>';
+            } else {
+                loadedEl.innerHTML = '<span class="no-files">No data loaded — ask Claude to sync from Numeric or add Excel files to /data</span>';
+                syncEl.innerHTML = '';
+            }
+
+            if (errors.length > 0) {
+                const errorList = errors.map(e =>
+                    `<div class="error-item">${e.file}${e.sheet ? ` (${e.sheet})` : ''}: ${e.error}</div>`
+                ).join('');
+                errorsEl.innerHTML = `<details><summary>${errors.length} error(s)</summary>${errorList}</details>`;
+            } else {
+                errorsEl.innerHTML = '';
+            }
+        }
+
+        function renderDashboard(dashboard) {
+            const container = document.getElementById('dashboard');
+
+            if (Object.keys(dashboard).length === 0) {
+                container.innerHTML = `
+                    <div class="empty">
+                        <p>No outstanding items found.</p>
+                        <p class="hint">Add Excel files to the <code>/data</code> folder with:</p>
+                        <ul class="hint-list">
+                            <li>"flux", "recon", "checklist", or "review" in the filename</li>
+                            <li>A Status column (Assigned, Prepared, or Reviewed)</li>
+                            <li>Preparer, Reviewer, Reviewer 2 columns</li>
+                        </ul>
+                    </div>`;
+                return;
+            }
+
+            let html = '';
+            const sortedTeams = Object.keys(dashboard).sort();
+
+            for (const team of sortedTeams) {
+                const teamData = dashboard[team];
+                const teamItemCount = countTeamItems(teamData);
+
+                html += `
+                    <div class="team-section">
+                        <div class="team-header" onclick="toggleSection(this)">
+                            <span class="toggle-icon">▼</span>
+                            <h2>${escapeHtml(team)}</h2>
+                            <span class="badge">${teamItemCount}</span>
+                        </div>
+                        <div class="team-content">
+                `;
+
+                const sortedPersons = Object.keys(teamData).sort();
+                for (const person of sortedPersons) {
+                    const personData = teamData[person];
+                    const personItemCount = countPersonItems(personData);
+
+                    html += `
+                        <div class="person-section">
+                            <div class="person-header" onclick="toggleSection(this)">
+                                <span class="toggle-icon">▼</span>
+                                <h3>${escapeHtml(person)}</h3>
+                                <span class="badge badge-small">${personItemCount}</span>
+                            </div>
+                            <div class="person-content">
+                    `;
+
+                    for (const type of TYPE_ORDER) {
+                        if (!personData[type]) continue;
+                        const typeData = personData[type];
+
+                        html += `
+                            <div class="type-section">
+                                <h4>${TYPE_LABELS[type]}</h4>
+                                <div class="role-grid">
+                        `;
+
+                        for (const role of ROLE_ORDER) {
+                            if (!typeData[role]) continue;
+                            const items = typeData[role];
+
+                            html += `
+                                <div class="role-card" onclick="toggleRoleCard(this)">
+                                    <div class="role-card-header">
+                                        <div>
+                                            <div class="role-label">${escapeHtml(role)}</div>
+                                            <div class="role-count">${items.length}</div>
+                                        </div>
+                                        <span class="role-expand-icon">▼</span>
+                                    </div>
+                                    <div class="role-items">
+                                        ${items.map(item => {
+                                            const taskName = escapeHtml(item.name) || 'Unnamed';
+                                            const source = escapeHtml(item.report_name) || escapeHtml(item.source).replace('.xlsx', '').replace('.xls', '');
+                                            return `
+                                            <div class="item">
+                                                <span class="item-name">${taskName} <span class="item-source">from ${source}</span></span>
+                                            </div>
+                                        `}).join('')}
+                                    </div>
+                                </div>
+                            `;
+                        }
+
+                        html += `
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    html += `
+                            </div>
+                        </div>
+                    `;
+                }
+
+                html += `
+                        </div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function countTeamItems(teamData) {
+            let count = 0;
+            for (const person of Object.values(teamData)) {
+                count += countPersonItems(person);
+            }
+            return count;
+        }
+
+        function countPersonItems(personData) {
+            let count = 0;
+            for (const type of Object.values(personData)) {
+                for (const role of Object.values(type)) {
+                    count += role.length;
+                }
+            }
+            return count;
+        }
+
+        function toggleSection(header) {
+            const content = header.nextElementSibling;
+            const icon = header.querySelector('.toggle-icon');
+            content.classList.toggle('collapsed');
+            icon.textContent = content.classList.contains('collapsed') ? '▶' : '▼';
+        }
+
+        function toggleRoleCard(card) {
+            card.classList.toggle('expanded');
+        }
+
+        async function showPreview(type) {
+            const endpoint = type === 'detailed' ? '/api/preview-detailed' : '/api/preview-summary';
+            currentPreviewType = type;
+
+            try {
+                const response = await fetch(endpoint);
+                const data = await response.json();
+
+                document.getElementById('previewTitle').textContent =
+                    type === 'detailed' ? 'Detailed Message Preview' : 'Summary Message Preview';
+                document.getElementById('previewChannel').textContent = `Channel: ${data.channel}`;
+                document.getElementById('previewMessage').textContent = data.message;
+                document.getElementById('previewModal').style.display = 'flex';
+
+                document.getElementById('previewSendBtn').onclick = () => {
+                    closePreview();
+                    sendToSlack(type);
+                };
+            } catch (error) {
+                showStatus('Failed to load preview', 'error');
+            }
+        }
+
+        function closePreview() {
+            document.getElementById('previewModal').style.display = 'none';
+            currentPreviewType = null;
+        }
+
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('statusMessage');
+            statusEl.textContent = message;
+            statusEl.className = `status-message ${type}`;
+            if (type === 'success') {
+                setTimeout(() => { statusEl.textContent = ''; }, 5000);
+            }
+        }
+
+        async function sendToSlack(type) {
+            const endpoint = type === 'detailed' ? '/api/send-detailed' : '/api/send-summary';
+            const channel = type === 'detailed' ? '#pe-close-monitoring' : '#accounting_close';
+            const buttonId = type === 'detailed' ? 'btnSendDetailed' : 'btnSendSummary';
+            const button = document.getElementById(buttonId);
+            const originalText = button.textContent;
+
+            button.disabled = true;
+            button.textContent = 'Sending...';
+
+            try {
+                const response = await fetch(endpoint, { method: 'POST' });
+                const data = await response.json();
+
+                if (data.ok) {
+                    showStatus(`Sent to ${channel}!`, 'success');
+                } else {
+                    showStatus(`Failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus('Failed to send', 'error');
+            }
+
+            button.disabled = false;
+            button.textContent = originalText;
+        }
+
+        // Mappings functions
+        async function openMappings() {
+            try {
+                const response = await fetch('/api/unmapped');
+                unmappedData = await response.json();
+                currentMappings = unmappedData.current_mappings || { names: {}, teams: {} };
+
+                renderNameMappings();
+                renderTeamMappings();
+
+                document.getElementById('mappingsModal').style.display = 'flex';
+            } catch (error) {
+                showStatus('Failed to load mappings', 'error');
+                console.error('Mappings load error:', error);
+            }
+        }
+
+        function closeMappings() {
+            document.getElementById('mappingsModal').style.display = 'none';
+        }
+
+        function renderNameMappings() {
+            const container = document.getElementById('nameMappingsContainer');
+            let html = '';
+
+            // Show existing mappings
+            for (const [email, name] of Object.entries(currentMappings.names || {})) {
+                html += createMappingRow('name', email, name);
+            }
+
+            // Show unmapped emails as suggestions
+            for (const email of unmappedData.unmapped_names || []) {
+                if (!currentMappings.names || !currentMappings.names[email]) {
+                    html += createMappingRow('name', email, '', true);
+                }
+            }
+
+            container.innerHTML = html || '<p class="no-items">No email addresses need mapping</p>';
+        }
+
+        function renderTeamMappings() {
+            const container = document.getElementById('teamMappingsContainer');
+            let html = '';
+
+            // Show existing mappings
+            for (const [person, team] of Object.entries(currentMappings.teams || {})) {
+                html += createMappingRow('team', person, team);
+            }
+
+            // Show unmapped people as suggestions
+            for (const person of unmappedData.unmapped_teams || []) {
+                if (!currentMappings.teams || !currentMappings.teams[person]) {
+                    html += createMappingRow('team', person, '', true);
+                }
+            }
+
+            container.innerHTML = html || '<p class="no-items">No people need team assignment</p>';
+        }
+
+        function createMappingRow(type, key, value, isSuggestion = false) {
+            const placeholder = type === 'name' ? 'Display Name' : 'Team Name';
+            const keyPlaceholder = type === 'name' ? 'Email address' : 'Person name';
+            const suggestionClass = isSuggestion ? 'mapping-suggestion' : '';
+
+            return `
+                <div class="mapping-row ${suggestionClass}" data-type="${type}">
+                    <input type="text" class="mapping-key" value="${escapeHtml(key)}" placeholder="${keyPlaceholder}" />
+                    <span class="mapping-arrow">&rarr;</span>
+                    <input type="text" class="mapping-value" value="${escapeHtml(value)}" placeholder="${placeholder}" />
+                    <button class="btn-remove" onclick="removeMapping(this)">&times;</button>
+                </div>
+            `;
+        }
+
+        function addNameMapping() {
+            const container = document.getElementById('nameMappingsContainer');
+            const noItems = container.querySelector('.no-items');
+            if (noItems) noItems.remove();
+            container.insertAdjacentHTML('beforeend', createMappingRow('name', '', ''));
+        }
+
+        function addTeamMapping() {
+            const container = document.getElementById('teamMappingsContainer');
+            const noItems = container.querySelector('.no-items');
+            if (noItems) noItems.remove();
+            container.insertAdjacentHTML('beforeend', createMappingRow('team', '', ''));
+        }
+
+        function removeMapping(btn) {
+            btn.closest('.mapping-row').remove();
+        }
+
+        async function saveMappings() {
+            const names = {};
+            const teams = {};
+
+            // Collect name mappings
+            document.querySelectorAll('#nameMappingsContainer .mapping-row').forEach(row => {
+                const key = row.querySelector('.mapping-key').value.trim();
+                const value = row.querySelector('.mapping-value').value.trim();
+                if (key && value) {
+                    names[key] = value;
+                }
+            });
+
+            // Collect team mappings
+            document.querySelectorAll('#teamMappingsContainer .mapping-row').forEach(row => {
+                const key = row.querySelector('.mapping-key').value.trim();
+                const value = row.querySelector('.mapping-value').value.trim();
+                if (key && value) {
+                    teams[key] = value;
+                }
+            });
+
+            try {
+                const response = await fetch('/api/mappings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ names, teams })
+                });
+
+                const result = await response.json();
+                if (result.ok) {
+                    closeMappings();
+                    showStatus('Mappings saved!', 'success');
+                    loadDashboard(); // Refresh to apply new mappings
+                } else {
+                    showStatus(`Failed to save: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus('Failed to save mappings', 'error');
+            }
+        }
+
+        // Event listeners
+        document.getElementById('btnMappings').addEventListener('click', openMappings);
+        document.getElementById('btnRefresh').addEventListener('click', loadDashboard);
+
+        document.getElementById('btnPreviewDetailed').addEventListener('click', () => showPreview('detailed'));
+        document.getElementById('btnPreviewSummary').addEventListener('click', () => showPreview('summary'));
+
+        document.getElementById('btnSendDetailed').addEventListener('click', () => {
+            sendToSlack('detailed');
+        });
+
+        document.getElementById('btnSendSummary').addEventListener('click', () => {
+            sendToSlack('summary');
+        });
+
+        // Close modal on background click
+        document.getElementById('previewModal').addEventListener('click', (e) => {
+            if (e.target.id === 'previewModal') closePreview();
+        });
+        document.getElementById('mappingsModal').addEventListener('click', (e) => {
+            if (e.target.id === 'mappingsModal') closeMappings();
+        });
+
+        // Close modal on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closePreview();
+                closeMappings();
+            }
+        });
+
+        // Initial load
+        loadDashboard();
+    </script>
+</body>
+</html>
