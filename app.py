@@ -18,6 +18,7 @@ MAPPINGS_FILE = DATA_DIR / "mappings.json"
 NUMERIC_CACHE_FILE  = DATA_DIR / "numeric_cache.json"
 VARIANCE_MAP_FILE   = DATA_DIR / "variance_map.json"
 REPORT_CONFIG_FILE  = DATA_DIR / "report_config.json"
+SYNC_LOG_FILE       = DATA_DIR / "sync_log.json"
 
 # Numeric task_type → dashboard type
 NUMERIC_TYPE_MAP = {
@@ -217,6 +218,17 @@ def parse_numeric_tsv(tsv_text):
     most frequently assigned team across all their other tasks.
     """
     lines = tsv_text.strip().split("\n")
+    if len(lines) < 2:
+        return []
+
+    # Skip any leading non-TSV summary lines (e.g. "4960 tasks") before the header
+    start = 0
+    for i, line in enumerate(lines):
+        if "\t" in line:
+            start = i
+            break
+
+    lines = lines[start:]
     if len(lines) < 2:
         return []
 
@@ -901,16 +913,61 @@ def api_sync():
         payload = request.get_json()
         tsv_text = payload.get("tsv", "")
         close_month = payload.get("close_month", "Unknown Period")
+
+        # Completeness: count raw TSV rows before filtering
+        tsv_lines = [l for l in tsv_text.strip().split("\n") if l.strip()]
+        raw_row_count = max(0, len(tsv_lines) - 1)  # subtract header
+
         items = parse_numeric_tsv(tsv_text)
         from datetime import datetime, timezone
+        synced_at = datetime.now(timezone.utc).isoformat()
+
         save_numeric_cache({
             "close_month": close_month,
-            "synced_at": datetime.now(timezone.utc).isoformat(),
+            "synced_at": synced_at,
             "items": items,
         })
-        return jsonify({"ok": True, "items_loaded": len(items), "close_month": close_month})
+
+        # Write sync log entry for completeness evidence
+        log_entry = {
+            "synced_at": synced_at,
+            "close_month": close_month,
+            "raw_rows_received": raw_row_count,
+            "items_after_filtering": len(items),
+            "filtered_out": raw_row_count - len(items),
+        }
+        try:
+            existing = []
+            if SYNC_LOG_FILE.exists():
+                with open(SYNC_LOG_FILE) as f:
+                    existing = json.load(f)
+            existing.append(log_entry)
+            with open(SYNC_LOG_FILE, "w") as f:
+                json.dump(existing[-50:], f, indent=2)  # keep last 50 entries
+        except Exception:
+            pass  # log failure is non-fatal
+
+        return jsonify({
+            "ok": True,
+            "items_loaded": len(items),
+            "close_month": close_month,
+            "raw_rows_received": raw_row_count,
+            "filtered_out": raw_row_count - len(items),
+        })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/sync_log", methods=["GET"])
+def api_sync_log():
+    """Return sync history for completeness review."""
+    try:
+        if SYNC_LOG_FILE.exists():
+            with open(SYNC_LOG_FILE) as f:
+                return jsonify(json.load(f))
+        return jsonify([])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/sync_review_notes", methods=["POST"])
