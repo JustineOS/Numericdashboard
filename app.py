@@ -273,8 +273,15 @@ def parse_numeric_tsv(tsv_text):
         if not task_type:
             continue
 
-        # Filter flux tasks to only those requiring explanation (above threshold)
-        if task_type == "flux" and not is_flux_required(
+        prep_assignee   = row.get("prep_assignee", "").strip()
+        review_assignee = row.get("review_assignee", "").strip()
+        prep_status     = row.get("prep_status", "").strip()
+        review_status   = row.get("review_status", "").strip()
+
+        # Materiality filter: only skip flux tasks that haven't been started yet.
+        # If prep is already COMPLETE, the explanation was written — the reviewer
+        # must still sign off regardless of variance size.
+        if task_type == "flux" and prep_status == "PENDING" and not is_flux_required(
             row.get("name", ""),
             row.get("report_id", ""),
             row.get("key_id", ""),
@@ -282,11 +289,6 @@ def parse_numeric_tsv(tsv_text):
             report_config,
         ):
             continue
-
-        prep_assignee   = row.get("prep_assignee", "").strip()
-        review_assignee = row.get("review_assignee", "").strip()
-        prep_status     = row.get("prep_status", "").strip()
-        review_status   = row.get("review_status", "").strip()
         explicit_team   = row.get("Team", "").strip()
         name            = row.get("name", "").strip()
         url             = row.get("url", "").strip()
