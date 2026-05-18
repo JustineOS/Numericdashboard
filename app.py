@@ -109,7 +109,12 @@ def is_flux_required(task_name, report_id, key_id, variance_map, report_config):
 
     effective_report_id = entry.get("report_id", report_id)
     if effective_report_id in mom:
-        t = thresh["mom_account"] if entry.get("is_account_line") else thresh["mom_total"]
+        # Cost-center/account lines (key_id contains '/') are breakdowns of an account
+        # within a single cost center — evaluated against the total-line threshold ($500k).
+        # Only a pure account-total row (no cost-center prefix, no '/') uses the
+        # lower account-line threshold ($50k).
+        is_pure_account_line = entry.get("is_account_line") and ("/" not in key_id)
+        t = thresh["mom_account"] if is_pure_account_line else thresh["mom_total"]
     else:
         t = thresh["default"]
 
