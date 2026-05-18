@@ -109,11 +109,12 @@ def is_flux_required(task_name, report_id, key_id, variance_map, report_config):
 
     effective_report_id = entry.get("report_id", report_id)
     if effective_report_id in mom:
-        # key_id format tells us the line type:
-        #   grp_xxx/account_number  → individual account line  → $50k/10% threshold
-        #   grp_xxx (no suffix)     → section/group total line → $500k/10% threshold
-        is_account_line = "/" in key_id
-        t = thresh["mom_account"] if is_account_line else thresh["mom_total"]
+        # is_account_line is set when building the variance_map by inspecting
+        # path depth in the report: depth-1 accounts with children are total lines
+        # (is_account_line=False, $500k threshold); leaf accounts are account lines
+        # (is_account_line=True, $50k threshold). Section headers (no '/') are always
+        # total lines and won't appear in the map with '/' keys.
+        t = thresh["mom_account"] if entry.get("is_account_line") else thresh["mom_total"]
     else:
         t = thresh["default"]
 
