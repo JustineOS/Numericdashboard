@@ -264,9 +264,22 @@ def parse_numeric_tsv(tsv_text):
             return counts.most_common(1)[0][0]
         return "Unknown Team"
 
-    # Pass 2: build items
+    # Pass 2: collect raw items and track every (name, report_id) that has ANY
+    # pending-prep instance — needed for reviewer dedup regardless of materiality.
     variance_map  = load_variance_map()
     report_config = load_report_config()
+
+    # Pre-scan: record which (name, report_id) keys have at least one prep-pending row.
+    # This is done BEFORE the materiality filter so that immaterial-but-pending rows
+    # still block the reviewer queue for that task.
+    flux_any_prep_pending = set()
+    for row in rows:
+        if NUMERIC_TYPE_MAP.get(row.get("task_type", "")) == "flux":
+            if row.get("prep_status", "").strip() == "PENDING":
+                flux_any_prep_pending.add(
+                    (row.get("name", "").strip(), row.get("report_id", "").strip())
+                )
+
     items = []
     for row in rows:
         task_type = NUMERIC_TYPE_MAP.get(row.get("task_type", ""), None)
@@ -277,21 +290,33 @@ def parse_numeric_tsv(tsv_text):
         review_assignee = row.get("review_assignee", "").strip()
         prep_status     = row.get("prep_status", "").strip()
         review_status   = row.get("review_status", "").strip()
+        report_id       = row.get("report_id", "").strip()
+        name            = row.get("name", "").strip()
 
         # Materiality filter: only skip flux tasks that haven't been started yet.
         # If prep is already COMPLETE, the explanation was written — the reviewer
         # must still sign off regardless of variance size.
         if task_type == "flux" and prep_status == "PENDING" and not is_flux_required(
-            row.get("name", ""),
-            row.get("report_id", ""),
+            name,
+            report_id,
             row.get("key_id", ""),
             variance_map,
             report_config,
         ):
             continue
-        explicit_team   = row.get("Team", "").strip()
-        name            = row.get("name", "").strip()
-        url             = row.get("url", "").strip()
+
+        # Reviewer dedup: if ANY cost-centre/entity instance of this task still has
+        # prep pending, don't surface the reviewer queue yet — even if this specific
+        # instance's prep is done. The task moves to the reviewer only once all
+        # instances are prepped.
+        if (task_type == "flux"
+                and prep_status == "COMPLETE"
+                and review_status == "PENDING"
+                and (name, report_id) in flux_any_prep_pending):
+            continue
+
+        explicit_team = row.get("Team", "").strip()
+        url           = row.get("url", "").strip()
 
         # Determine active role & person
         if prep_status == "PENDING" and prep_assignee:
@@ -304,16 +329,16 @@ def parse_numeric_tsv(tsv_text):
         team = infer_team(person, explicit_team)
 
         items.append({
-            "team": team,
-            "person": person,
-            "type": task_type,
-            "role": role,
-            "status": status,
-            "name": name,
+            "team":        team,
+            "person":      person,
+            "type":        task_type,
+            "role":        role,
+            "status":      status,
+            "name":        name,
             "report_name": "",
-            "source": "Numeric",
-            "sheet": "",
-            "url": url,
+            "source":      "Numeric",
+            "sheet":       "",
+            "url":         url,
         })
 
     return items
