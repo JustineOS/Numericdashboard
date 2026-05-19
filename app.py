@@ -268,6 +268,8 @@ def parse_numeric_tsv(tsv_text):
     # pending-prep instance — needed for reviewer dedup regardless of materiality.
     variance_map  = load_variance_map()
     report_config = load_report_config()
+    ignored_set   = set(report_config.get("ignored_reports", []))
+    mom_set       = set(report_config.get("mom_reports", []))
 
     # Pre-scan: record which (name, report_id) keys have at least one prep-pending row.
     # This is done BEFORE the materiality filter so that immaterial-but-pending rows
@@ -292,18 +294,29 @@ def parse_numeric_tsv(tsv_text):
         review_status   = row.get("review_status", "").strip()
         report_id       = row.get("report_id", "").strip()
         name            = row.get("name", "").strip()
+        key_id          = row.get("key_id", "").strip()
 
-        # Materiality filter: only skip flux tasks that haven't been started yet.
-        # If prep is already COMPLETE, the explanation was written — the reviewer
-        # must still sign off regardless of variance size.
-        if task_type == "flux" and prep_status == "PENDING" and not is_flux_required(
-            name,
-            report_id,
-            row.get("key_id", ""),
-            variance_map,
-            report_config,
-        ):
-            continue
+        if task_type == "flux":
+            # Ignored reports: skip entirely
+            if report_id in ignored_set:
+                continue
+
+            entry = variance_map.get(key_id)
+            if entry:
+                effective_report_id = entry.get("report_id", report_id)
+
+                # Non-MoM reports only assign total/parent lines — leaf accounts
+                # should never appear on the dashboard regardless of prep status.
+                if effective_report_id not in mom_set and entry.get("is_account_line"):
+                    continue
+
+            # Materiality filter: only skip flux tasks that haven't been started yet.
+            # If prep is already COMPLETE, the explanation was written — the reviewer
+            # must still sign off regardless of variance size (for MoM account lines).
+            if prep_status == "PENDING" and not is_flux_required(
+                name, report_id, key_id, variance_map, report_config,
+            ):
+                continue
 
         # Reviewer dedup: if ANY cost-centre/entity instance of this task still has
         # prep pending, don't surface the reviewer queue yet — even if this specific
